@@ -1,0 +1,11 @@
+refresh_data:
+  name: Refresh NEFT Data
+  description: Manually refresh transaction and tariff data
+  fields:
+    entity_id:
+      name: Entity
+      description: The NEFT sensor entity to refresh
+      required: true
+      selector:
+        entity:
+          integration: neft_backoffice
