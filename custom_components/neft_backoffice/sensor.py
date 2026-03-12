@@ -1,9 +1,15 @@
 """Sensor platform for NEFT Backoffice."""
 import logging
+from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CURRENCY_EURO, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -39,16 +45,18 @@ async def async_setup_entry(
     """Set up NEFT Backoffice sensors."""
     coordinator: NEFTDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [
-        NEFTTransactionCountSensor(coordinator, entry),
+    sensors = [
+        NEFTTotalTransactionsSensor(coordinator, entry),
         NEFTNewTransactionsSensor(coordinator, entry),
         NEFTTotalCostSensor(coordinator, entry),
-        NEFTTotalEnergyConsumptionSensor(coordinator, entry),
+        NEFTTotalEnergySensor(coordinator, entry),
         NEFTACTariffSensor(coordinator, entry),
         NEFTDCTariffSensor(coordinator, entry),
+        NEFTLastUpdateSensor(coordinator, entry),
+        NEFTCoordinatorStatusSensor(coordinator, entry),
     ]
 
-    async_add_entities(entities)
+    async_add_entities(sensors)
 
 
 class NEFTBaseSensor(CoordinatorEntity, SensorEntity):
@@ -67,17 +75,24 @@ class NEFTBaseSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{sensor_type}"
         self._attr_has_entity_name = True
 
+    @property
+    def device_info(self):
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": f"NEFT Backoffice ({self._entry.data.get('username')})",
+            "manufacturer": "NEFT",
+            "model": "Backoffice",
+            "sw_version": "1.0",
+        }
 
-class NEFTTransactionCountSensor(NEFTBaseSensor):
-    """Sensor for total transaction count."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+class NEFTTotalTransactionsSensor(NEFTBaseSensor):
+    """Sensor for total number of transactions."""
+
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, entry, "transaction_count")
+        super().__init__(coordinator, entry, "total_transactions")
         self._attr_name = "Total Transactions"
         self._attr_icon = "mdi:counter"
         self._attr_state_class = SensorStateClass.TOTAL
@@ -85,55 +100,58 @@ class NEFTTransactionCountSensor(NEFTBaseSensor):
     @property
     def native_value(self) -> int:
         """Return the state of the sensor."""
-        return self.coordinator.data.get("total_transactions", 0)
+        if self.coordinator.data:
+            return self.coordinator.data.get("total_transactions", 0)
+        return 0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        
         return {
-            "last_update": self.coordinator.last_update_success_time,
+            "last_update": self.coordinator.data.get("last_update"),
+            "consecutive_errors": self.coordinator.consecutive_errors,
         }
 
 
 class NEFTNewTransactionsSensor(NEFTBaseSensor):
     """Sensor for new transactions since last update."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, entry, "new_transactions")
         self._attr_name = "New Transactions"
         self._attr_icon = "mdi:new-box"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> int:
         """Return the state of the sensor."""
-        return len(self.coordinator.data.get("new_transactions", []))
+        if self.coordinator.data:
+            return len(self.coordinator.data.get("new_transactions", []))
+        return 0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        
         new_transactions = self.coordinator.data.get("new_transactions", [])
-
-        # Format new transactions for attributes
+        
+        # Return details of new transactions
         transactions_list = []
         for trans in new_transactions[:10]:  # Limit to 10 most recent
-            columns = trans.get('columns', {})
+            columns = trans.get("columns", {})
             transactions_list.append({
-                ATTR_TRANSACTION_ID: trans.get('row_id'),
-                ATTR_PASS_ID: columns.get('0', {}).get('text', ''),
-                ATTR_CHARGING_STATION: columns.get('1', {}).get('text', ''),
-                ATTR_SETTLEMENT_TYPE: columns.get('2', {}).get('text', ''),
-                ATTR_DATE: columns.get('3', {}).get('text', ''),
-                ATTR_TYPE: columns.get('4', {}).get('badge') or columns.get('4', {}).get('text', ''),
-                ATTR_KWH: columns.get('5', {}).get('text', ''),
-                ATTR_COST: columns.get('6', {}).get('text', ''),
-                ATTR_HAS_ERROR: columns.get('6', {}).get('has_error', False),
+                "pass_id": columns.get("0", {}).get("text", ""),
+                "date": columns.get("3", {}).get("text", ""),
+                "kwh": columns.get("5", {}).get("text", ""),
+                "cost": columns.get("6", {}).get("text", ""),
             })
-
+        
         return {
             "transactions": transactions_list,
             "total_new": len(new_transactions),
@@ -143,206 +161,243 @@ class NEFTNewTransactionsSensor(NEFTBaseSensor):
 class NEFTTotalCostSensor(NEFTBaseSensor):
     """Sensor for total cost of all transactions."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, entry, "total_cost")
         self._attr_name = "Total Cost"
         self._attr_icon = "mdi:currency-eur"
-        self._attr_native_unit_of_measurement = "EUR"
+        self._attr_native_unit_of_measurement = CURRENCY_EURO
+        self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
 
     @property
     def native_value(self) -> float:
         """Return the state of the sensor."""
+        if not self.coordinator.data:
+            return 0.0
+        
         transactions = self.coordinator.data.get("transactions", [])
         total_cost = 0.0
-
+        
         for trans in transactions:
-            columns = trans.get('columns', {})
-            cost_str = columns.get('6', {}).get('text', '€0.00')
-
-            # Parse cost (remove €, convert to float)
+            columns = trans.get("columns", {})
+            cost_text = columns.get("6", {}).get("text", "0")
+            
+            # Parse cost (remove currency symbols and convert to float)
             try:
-                cost_value = float(cost_str.replace('€', '').replace(',', '.').strip())
-                total_cost += cost_value
+                cost_clean = cost_text.replace("€", "").replace(",", ".").strip()
+                total_cost += float(cost_clean)
             except (ValueError, AttributeError):
                 continue
-
+        
         return round(total_cost, 2)
 
 
-class NEFTTotalEnergyConsumptionSensor(NEFTBaseSensor):
-    """Sensor for total energy consumption."""
+class NEFTTotalEnergySensor(NEFTBaseSensor):
+    """Sensor for total energy consumed."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, entry, "total_energy")
-        self._attr_name = "Total Energy Consumption"
+        self._attr_name = "Total Energy"
         self._attr_icon = "mdi:lightning-bolt"
-        self._attr_native_unit_of_measurement = "kWh"
-        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+        self._attr_device_class = SensorDeviceClass.ENERGY
+        self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     @property
     def native_value(self) -> float:
         """Return the state of the sensor."""
+        if not self.coordinator.data:
+            return 0.0
+        
         transactions = self.coordinator.data.get("transactions", [])
         total_kwh = 0.0
-
+        
         for trans in transactions:
-            columns = trans.get('columns', {})
-            kwh_str = columns.get('5', {}).get('text', '0 kWh')
-
-            # Parse kWh (remove 'kWh', convert to float)
+            columns = trans.get("columns", {})
+            kwh_text = columns.get("5", {}).get("text", "0")
+            
+            # Parse kWh
             try:
-                kwh_value = float(kwh_str.replace('kWh', '').replace(',', '.').strip())
-                total_kwh += kwh_value
+                kwh_clean = kwh_text.replace("kWh", "").replace(",", ".").strip()
+                total_kwh += float(kwh_clean)
             except (ValueError, AttributeError):
                 continue
-
+        
         return round(total_kwh, 2)
 
 
 class NEFTACTariffSensor(NEFTBaseSensor):
-    """Sensor for AC charging tariffs."""
+    """Sensor for AC charging tariff."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, entry, "ac_tariff")
         self._attr_name = "AC Charging Tariff"
         self._attr_icon = "mdi:ev-station"
+        self._attr_native_unit_of_measurement = f"{CURRENCY_EURO}/kWh"
 
     @property
     def native_value(self) -> str:
         """Return the state of the sensor."""
+        if not self.coordinator.data:
+            return "Unknown"
+        
         tariff_data = self.coordinator.data.get("tariff_data", {})
         charging_types = tariff_data.get("charging_types", [])
-
+        
         for charging_type in charging_types:
-            if charging_type.get('type') == 'AC Charging':
-                tariffs = charging_type.get('tariffs', [])
+            if "AC" in charging_type.get("type", "").upper():
+                tariffs = charging_type.get("tariffs", [])
                 if tariffs:
-                    # Return the per kWh tariff as the main state
-                    for tariff in tariffs:
-                        if 'kWh' in tariff.get('label', ''):
-                            return tariff.get('total_with_vat', 'Unknown')
-
+                    # Return first tariff's total with VAT
+                    return tariffs[0].get("total_with_vat", "Unknown")
+        
         return "Unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        
         tariff_data = self.coordinator.data.get("tariff_data", {})
         charging_types = tariff_data.get("charging_types", [])
-
-        attributes = {}
-
+        
         for charging_type in charging_types:
-            if charging_type.get('type') == 'AC Charging':
-                tariffs = charging_type.get('tariffs', [])
-
+            if "AC" in charging_type.get("type", "").upper():
+                tariffs = charging_type.get("tariffs", [])
+                
+                attrs = {}
                 for tariff in tariffs:
-                    label = tariff.get('label', '')
-
-                    if 'kWh' in label:
-                        attributes[ATTR_AC_TARIFF_PER_KWH] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                            'country': tariff.get('country'),
-                            'vat_percentage': tariff.get('vat_percentage'),
-                        }
-                    elif 'session' in label.lower():
-                        attributes[ATTR_AC_TARIFF_PER_SESSION] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                        }
-                    elif 'hour' in label.lower():
-                        attributes[ATTR_AC_TARIFF_PER_HOUR] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                        }
-
-        return attributes
+                    label = tariff.get("label", "").lower().replace(" ", "_")
+                    attrs[f"{label}_base"] = tariff.get("base_value", "0")
+                    attrs[f"{label}_fee"] = tariff.get("additional_fee", "0")
+                    attrs[f"{label}_total"] = tariff.get("total_with_vat", "0")
+                    attrs[f"{label}_country"] = tariff.get("country", "Unknown")
+                    attrs[f"{label}_vat"] = tariff.get("vat_percentage", "0")
+                
+                return attrs
+        
+        return {}
 
 
 class NEFTDCTariffSensor(NEFTBaseSensor):
-    """Sensor for DC charging tariffs."""
+    """Sensor for DC charging tariff."""
 
-    def __init__(
-        self,
-        coordinator: NEFTDataUpdateCoordinator,
-        entry: ConfigEntry,
-    ) -> None:
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, entry, "dc_tariff")
         self._attr_name = "DC Charging Tariff"
-        self._attr_icon = "mdi:ev-plug-ccs2"
+        self._attr_icon = "mdi:ev-plug-type2"
+        self._attr_native_unit_of_measurement = f"{CURRENCY_EURO}/kWh"
 
     @property
     def native_value(self) -> str:
         """Return the state of the sensor."""
+        if not self.coordinator.data:
+            return "Unknown"
+        
         tariff_data = self.coordinator.data.get("tariff_data", {})
         charging_types = tariff_data.get("charging_types", [])
-
+        
         for charging_type in charging_types:
-            if charging_type.get('type') == 'DC Charging':
-                tariffs = charging_type.get('tariffs', [])
+            if "DC" in charging_type.get("type", "").upper():
+                tariffs = charging_type.get("tariffs", [])
                 if tariffs:
-                    # Return the per kWh tariff as the main state
-                    for tariff in tariffs:
-                        if 'kWh' in tariff.get('label', ''):
-                            return tariff.get('total_with_vat', 'Unknown')
-
+                    # Return first tariff's total with VAT
+                    return tariffs[0].get("total_with_vat", "Unknown")
+        
         return "Unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+        
         tariff_data = self.coordinator.data.get("tariff_data", {})
         charging_types = tariff_data.get("charging_types", [])
-
-        attributes = {}
-
+        
         for charging_type in charging_types:
-            if charging_type.get('type') == 'DC Charging':
-                tariffs = charging_type.get('tariffs', [])
-
+            if "DC" in charging_type.get("type", "").upper():
+                tariffs = charging_type.get("tariffs", [])
+                
+                attrs = {}
                 for tariff in tariffs:
-                    label = tariff.get('label', '')
+                    label = tariff.get("label", "").lower().replace(" ", "_")
+                    attrs[f"{label}_base"] = tariff.get("base_value", "0")
+                    attrs[f"{label}_fee"] = tariff.get("additional_fee", "0")
+                    attrs[f"{label}_total"] = tariff.get("total_with_vat", "0")
+                    attrs[f"{label}_country"] = tariff.get("country", "Unknown")
+                    attrs[f"{label}_vat"] = tariff.get("vat_percentage", "0")
+                
+                return attrs
+        
+        return {}
 
-                    if 'kWh' in label:
-                        attributes[ATTR_DC_TARIFF_PER_KWH] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                            'country': tariff.get('country'),
-                            'vat_percentage': tariff.get('vat_percentage'),
-                        }
-                    elif 'session' in label.lower():
-                        attributes[ATTR_DC_TARIFF_PER_SESSION] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                        }
-                    elif 'hour' in label.lower():
-                        attributes[ATTR_DC_TARIFF_PER_HOUR] = {
-                            'base_value': tariff.get('base_value'),
-                            'additional_fee': tariff.get('additional_fee'),
-                            'total_with_vat': tariff.get('total_with_vat'),
-                        }
 
-        return attributes
+class NEFTLastUpdateSensor(NEFTBaseSensor):
+    """Sensor for last successful update time."""
+
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "last_update")
+        self._attr_name = "Last Update"
+        self._attr_icon = "mdi:clock-outline"
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the state of the sensor."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("last_update")
+        return None
+
+
+class NEFTCoordinatorStatusSensor(NEFTBaseSensor):
+    """Diagnostic sensor for coordinator status."""
+
+    def __init__(self, coordinator: NEFTDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, "coordinator_status")
+        self._attr_name = "Coordinator Status"
+        self._attr_icon = "mdi:information-outline"
+        self._attr_entity_category = "diagnostic"
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        if self.coordinator.last_update_success:
+            return "OK"
+        elif self.coordinator.consecutive_errors > 0:
+            return f"Error ({self.coordinator.consecutive_errors} consecutive)"
+        else:
+            return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        attrs = {
+            "last_update_success": self.coordinator.last_update_success,
+            "consecutive_errors": self.coordinator.consecutive_errors,
+            "update_interval": str(self.coordinator.update_interval),
+        }
+        
+        if self.coordinator.last_exception:
+            attrs["last_error"] = self.coordinator.last_exception
+        
+        # Add WebDriver info if using Selenium
+        if self._entry.data.get(CONF_REMOTE_WEBDRIVER):
+            attrs["webdriver_type"] = "remote"
+            attrs["webdriver_url"] = self._entry.data.get(CONF_WEBDRIVER_URL, "Unknown")
+        else:
+            attrs["webdriver_type"] = "local"
+        
+        return attrs
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return True  # Always available to show status

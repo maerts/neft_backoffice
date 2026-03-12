@@ -5,9 +5,11 @@ DOMAIN = "neft_backoffice"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_SELENIUM_URL = "selenium_url"
 
 DEFAULT_SCAN_INTERVAL = timedelta(hours=1)
 MIN_SCAN_INTERVAL = timedelta(minutes=30)
+DEFAULT_SELENIUM_URL = "http://localhost:4444/wd/hub"
 
 # Attributes
 ATTR_TRANSACTION_ID = "transaction_id"

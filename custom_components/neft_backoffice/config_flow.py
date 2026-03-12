@@ -10,7 +10,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
-from .const import DOMAIN, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, MIN_SCAN_INTERVAL
+from .const import (
+    DOMAIN,
+    CONF_SCAN_INTERVAL,
+    CONF_SELENIUM_URL,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SELENIUM_URL,
+    MIN_SCAN_INTERVAL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +25,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Required(CONF_SELENIUM_URL, default=DEFAULT_SELENIUM_URL): str,
     }
 )
 
@@ -27,22 +35,25 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # Import here to avoid loading selenium at startup
     from .scraper import NEFTBackofficeScraper
 
-    def _test_login():
-        """Test login in executor."""
-        scraper = NEFTBackofficeScraper(data[CONF_USERNAME], data[CONF_PASSWORD])
+    def _test_connection():
+        """Test connection in executor."""
+        scraper = NEFTBackofficeScraper(
+            data[CONF_USERNAME],
+            data[CONF_PASSWORD],
+            data[CONF_SELENIUM_URL]
+        )
         try:
             scraper.setup_driver()
             scraper.login()
-            scraper.close()
             return True
         except Exception as err:
-            _LOGGER.error("Login test failed: %s", err)
+            _LOGGER.error("Connection test failed: %s", err)
             raise
         finally:
             scraper.close()
 
     try:
-        await hass.async_add_executor_job(_test_login)
+        await hass.async_add_executor_job(_test_connection)
     except Exception as err:
         raise ValueError("Cannot connect") from err
 
@@ -117,6 +128,12 @@ class NEFTOptionsFlowHandler(config_entries.OptionsFlow):
                             msg=f"Minimum scan interval is {MIN_SCAN_INTERVAL.total_seconds() / 60} minutes",
                         ),
                     ),
+                    vol.Optional(
+                        CONF_SELENIUM_URL,
+                        default=self.config_entry.data.get(
+                            CONF_SELENIUM_URL, DEFAULT_SELENIUM_URL
+                        ),
+                    ): str,
                 }
             ),
         )
