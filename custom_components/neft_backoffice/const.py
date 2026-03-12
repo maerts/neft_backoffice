@@ -6,6 +6,7 @@ CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_SELENIUM_URL = "selenium_url"
+CONF_ORGANIZATION_ID = "organization_id"
 
 DEFAULT_SCAN_INTERVAL = timedelta(hours=1)
 MIN_SCAN_INTERVAL = timedelta(minutes=30)

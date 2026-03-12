@@ -1,3 +1,4 @@
+
 """Config flow for NEFT Backoffice integration."""
 import logging
 from typing import Any
@@ -14,6 +15,7 @@ from .const import (
     DOMAIN,
     CONF_SCAN_INTERVAL,
     CONF_SELENIUM_URL,
+    CONF_ORGANIZATION_ID,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SELENIUM_URL,
     MIN_SCAN_INTERVAL,
@@ -26,13 +28,13 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Required(CONF_SELENIUM_URL, default=DEFAULT_SELENIUM_URL): str,
+        vol.Optional(CONF_ORGANIZATION_ID): str,
     }
 )
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
-    # Import here to avoid loading selenium at startup
     from .scraper import NEFTBackofficeScraper
 
     def _test_connection():
@@ -40,11 +42,20 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         scraper = NEFTBackofficeScraper(
             data[CONF_USERNAME],
             data[CONF_PASSWORD],
-            data[CONF_SELENIUM_URL]
+            data[CONF_SELENIUM_URL],
+            data.get(CONF_ORGANIZATION_ID)
         )
         try:
             scraper.setup_driver()
             scraper.login()
+            
+            # If org ID not provided, try to extract it
+            if not data.get(CONF_ORGANIZATION_ID):
+                org_id = scraper.organization_id
+                if org_id:
+                    data[CONF_ORGANIZATION_ID] = org_id
+                    _LOGGER.info("Auto-detected organization ID: %s", org_id)
+            
             return True
         except Exception as err:
             _LOGGER.error("Connection test failed: %s", err)
@@ -133,6 +144,10 @@ class NEFTOptionsFlowHandler(config_entries.OptionsFlow):
                         default=self.config_entry.data.get(
                             CONF_SELENIUM_URL, DEFAULT_SELENIUM_URL
                         ),
+                    ): str,
+                    vol.Optional(
+                        CONF_ORGANIZATION_ID,
+                        default=self.config_entry.data.get(CONF_ORGANIZATION_ID, ""),
                     ): str,
                 }
             ),

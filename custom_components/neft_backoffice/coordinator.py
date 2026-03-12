@@ -8,7 +8,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, CONF_SELENIUM_URL
+from .const import DOMAIN, CONF_SELENIUM_URL, CONF_ORGANIZATION_ID
 from .scraper import NEFTBackofficeScraper
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,14 +41,17 @@ class NEFTDataUpdateCoordinator(DataUpdateCoordinator):
             username = self.entry.data[CONF_USERNAME]
             password = self.entry.data[CONF_PASSWORD]
             selenium_url = self.entry.data.get(CONF_SELENIUM_URL)
+            organization_id = self.entry.data.get(CONF_ORGANIZATION_ID)
             
-            # Use updated selenium_url from options if available
+            # Use updated values from options if available
             if CONF_SELENIUM_URL in self.entry.options:
                 selenium_url = self.entry.options[CONF_SELENIUM_URL]
+            if CONF_ORGANIZATION_ID in self.entry.options:
+                organization_id = self.entry.options[CONF_ORGANIZATION_ID]
 
             # Run scraper in executor to avoid blocking
             data = await self.hass.async_add_executor_job(
-                self._scrape_data, username, password, selenium_url
+                self._scrape_data, username, password, selenium_url, organization_id
             )
 
             return data
@@ -57,15 +60,21 @@ class NEFTDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Error fetching NEFT data: %s", err)
             raise UpdateFailed(f"Error communicating with NEFT: {err}") from err
 
-    def _scrape_data(self, username: str, password: str, selenium_url: str) -> dict[str, Any]:
+    def _scrape_data(
+        self, 
+        username: str, 
+        password: str, 
+        selenium_url: str,
+        organization_id: str = None
+    ) -> dict[str, Any]:
         """Scrape data from NEFT (runs in executor)."""
         try:
-            scraper = NEFTBackofficeScraper(username, password, selenium_url)
+            scraper = NEFTBackofficeScraper(username, password, selenium_url, organization_id)
             scraper.setup_driver()
             scraper.login()
 
             # Scrape transactions
-            transactions = [] # scraper.scrape_transactions()
+            transactions = scraper.scrape_transactions()
 
             # Scrape tariff settings
             tariff_data = scraper.scrape_tariff_settings()

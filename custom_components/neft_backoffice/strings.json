@@ -3,14 +3,16 @@
     "step": {
       "user": {
         "title": "NEFT Backoffice Setup",
-        "description": "Enter your NEFT Backoffice credentials and Selenium configuration",
+        "description": "Enter your NEFT Backoffice credentials and configuration",
         "data": {
           "username": "Username",
           "password": "Password",
-          "selenium_url": "Selenium Remote URL"
+          "selenium_url": "Selenium Remote URL",
+          "organization_id": "Organization ID (optional - will be auto-detected)"
         },
         "data_description": {
-          "selenium_url": "URL of the remote Selenium container (e.g., http://selenium:4444/wd/hub)"
+          "selenium_url": "URL of the remote Selenium container (e.g., http://selenium:4444/wd/hub)",
+          "organization_id": "Your NEFT organization ID (leave empty for auto-detection)"
         }
       }
     },
@@ -26,10 +28,11 @@
     "step": {
       "init": {
         "title": "NEFT Backoffice Options",
-        "description": "Configure update interval and Selenium settings",
+        "description": "Configure update interval and advanced settings",
         "data": {
           "scan_interval": "Update interval (minutes)",
-          "selenium_url": "Selenium Remote URL"
+          "selenium_url": "Selenium Remote URL",
+          "organization_id": "Organization ID"
         }
       }
     }

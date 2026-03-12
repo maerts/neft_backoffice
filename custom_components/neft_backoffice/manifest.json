@@ -1,3 +1,4 @@
+
 {
   "domain": "neft_backoffice",
   "name": "NEFT Backoffice",
@@ -9,5 +10,5 @@
   "requirements": [
     "selenium==4.15.2"
   ],
-  "version": "1.0.1"
+  "version": "1.0.2"
 }
