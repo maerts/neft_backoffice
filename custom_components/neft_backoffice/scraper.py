@@ -392,9 +392,9 @@ class NEFTBackofficeScraper:
         ac_tariffs = []
         
         # Per kWh
-        ac_kwh_base = ac_charging.get('kwh', 0)
         ac_kwh_margin = ac_margin.get('kwh', 0.03)
-        ac_kwh_total = ac_kwh_base
+        ac_kwh_base = ac_charging.get('kwh', 0) - ac_kwh_margin
+        ac_kwh_total = ac_kwh_base + ac_kwh_margin
         ac_kwh_with_vat = round(ac_kwh_total * (1 + vat), 2)
         
         ac_tariffs.append({
@@ -445,9 +445,9 @@ class NEFTBackofficeScraper:
         dc_tariffs = []
         
         # Per kWh
-        dc_kwh_base = dc_charging.get('kwh', 0)
         dc_kwh_margin = dc_margin.get('kwh', 0.03)
-        dc_kwh_total = dc_kwh_base
+        dc_kwh_base = dc_charging.get('kwh', 0) - dc_kwh_margin
+        dc_kwh_total = dc_kwh_base + dc_kwh_margin
         dc_kwh_with_vat = round(dc_kwh_total * (1 + vat), 2)
         
         dc_tariffs.append({
