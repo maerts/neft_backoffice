@@ -28,7 +28,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Required(CONF_SELENIUM_URL, default=DEFAULT_SELENIUM_URL): str,
-        vol.Optional(CONF_ORGANIZATION_ID): str,
+        vol.Required(CONF_ORGANIZATION_ID): str,
     }
 )
 
@@ -43,19 +43,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             data[CONF_USERNAME],
             data[CONF_PASSWORD],
             data[CONF_SELENIUM_URL],
-            data.get(CONF_ORGANIZATION_ID)
+            data[CONF_ORGANIZATION_ID]
         )
         try:
             scraper.setup_driver()
             scraper.login()
-            
-            # If org ID not provided, try to extract it
-            if not data.get(CONF_ORGANIZATION_ID):
-                org_id = scraper.organization_id
-                if org_id:
-                    data[CONF_ORGANIZATION_ID] = org_id
-                    _LOGGER.info("Auto-detected organization ID: %s", org_id)
-            
+
             return True
         except Exception as err:
             _LOGGER.error("Connection test failed: %s", err)
@@ -114,7 +107,7 @@ class NEFTOptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -129,7 +122,7 @@ class NEFTOptionsFlowHandler(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self.config_entry.options.get(
+                        default=self._config_entry.options.get(
                             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL.total_seconds() / 60
                         ),
                     ): vol.All(
@@ -141,13 +134,9 @@ class NEFTOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     vol.Optional(
                         CONF_SELENIUM_URL,
-                        default=self.config_entry.data.get(
+                        default=self._config_entry.data.get(
                             CONF_SELENIUM_URL, DEFAULT_SELENIUM_URL
                         ),
-                    ): str,
-                    vol.Optional(
-                        CONF_ORGANIZATION_ID,
-                        default=self.config_entry.data.get(CONF_ORGANIZATION_ID, ""),
                     ): str,
                 }
             ),

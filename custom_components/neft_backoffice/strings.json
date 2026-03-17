@@ -8,11 +8,11 @@
           "username": "Username",
           "password": "Password",
           "selenium_url": "Selenium Remote URL",
-          "organization_id": "Organization ID (optional - will be auto-detected)"
+          "organization_id": "Organization ID"
         },
         "data_description": {
           "selenium_url": "URL of the remote Selenium container (e.g., http://selenium:4444/wd/hub)",
-          "organization_id": "Your NEFT organization ID (leave empty for auto-detection)"
+          "organization_id": "Your NEFT organization ID, can be found in the URL on the organization settings call."
         }
       }
     },
@@ -32,7 +32,6 @@
         "data": {
           "scan_interval": "Update interval (minutes)",
           "selenium_url": "Selenium Remote URL",
-          "organization_id": "Organization ID"
         }
       }
     }

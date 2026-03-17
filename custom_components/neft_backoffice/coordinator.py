@@ -72,28 +72,29 @@ class NEFTDataUpdateCoordinator(DataUpdateCoordinator):
             scraper = NEFTBackofficeScraper(username, password, selenium_url, organization_id)
             scraper.setup_driver()
             scraper.login()
-
+    
             # Scrape transactions
             transactions = scraper.scrape_transactions()
-
+    
             # Scrape tariff settings
             tariff_data = scraper.scrape_tariff_settings()
-
+    
+            # Scrape asset status (NEW)
+            assets_status = scraper.scrape_all_assets()
+    
             scraper.close()
-
+    
             # Process transactions - only keep new ones
             new_transactions = []
             for transaction in transactions:
-                # Create unique ID from transaction data
                 trans_id = self._create_transaction_id(transaction)
                 
                 if trans_id not in self._stored_transactions:
                     self._stored_transactions[trans_id] = transaction
                     new_transactions.append(transaction)
-
+    
             # Limit stored transactions to last 1000
             if len(self._stored_transactions) > 1000:
-                # Keep only the most recent 1000
                 sorted_ids = sorted(
                     self._stored_transactions.keys(),
                     key=lambda x: self._stored_transactions[x].get('row_id', '0'),
@@ -103,14 +104,15 @@ class NEFTDataUpdateCoordinator(DataUpdateCoordinator):
                     k: self._stored_transactions[k]
                     for k in sorted_ids[:1000]
                 }
-
+    
             return {
                 "transactions": list(self._stored_transactions.values()),
                 "new_transactions": new_transactions,
                 "tariff_data": tariff_data,
+                "assets_status": assets_status,  # NEW
                 "total_transactions": len(self._stored_transactions),
             }
-
+    
         except Exception as err:
             _LOGGER.error("Scraping error: %s", err)
             raise

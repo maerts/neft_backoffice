@@ -79,108 +79,124 @@ class NEFTBackofficeScraper:
             _LOGGER.info("Login successful!")
 
             time.sleep(2)
-            
-            # Extract organization ID if not provided
-            if not self.organization_id:
-                self._extract_organization_id()
 
         except Exception as e:
             _LOGGER.error("Login failed: %s", str(e))
             raise
 
-    def _extract_organization_id(self):
-        """Extract organization ID from the current page or URL."""
-        try:
-            wait = WebDriverWait(self.driver, 10)
+def scrape_transactions(self, limit: int = 100, offset: int = 0, fetch_all: bool = True) -> list:
+    """Scrape transactions using the API endpoint via Selenium with pagination support."""
+    try:
+        wait = WebDriverWait(self.driver, 10)
+        
+        # First, get total count by querying with high offset
+        _LOGGER.debug("Fetching transaction count...")
+        count_url = (
+            f"{self.base_url}/api/transaction?"
+            f"limit=20&"
+            f"offset=999999&"
+            f"sort=-endedAt"
+        )
+        
+        count_script = f"""
+            return fetch('{count_url}', {{
+                method: 'GET',
+                credentials: 'include',
+                headers: {{
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }}
+            }})
+            .then(response => response.json())
+            .then(data => data)
+            .catch(error => ({{ error: error.toString() }}));
+        """
+        
+        count_data = self.driver.execute_script(count_script)
+        
+        if 'error' in count_data:
+            raise Exception(f"API error getting count: {count_data['error']}")
+        
+        total_transactions = count_data.get('total', 0)
+        total_pages = count_data.get('pages', 0)
+        
+        _LOGGER.info("Found %d total transactions across %d pages", total_transactions, total_pages)
+        
+        if not fetch_all:
+            # Fetch only one page
+            return self._fetch_transaction_page(limit, offset)
+        
+        # Fetch all pages
+        all_transactions = []
+        current_offset = 0
+        page_limit = 100  # Fetch 100 transactions per page for efficiency
+        
+        while current_offset < total_transactions:
+            _LOGGER.debug("Fetching page at offset %d", current_offset)
+            page_transactions = self._fetch_transaction_page(page_limit, current_offset)
             
-            # Navigate to a page that might contain the org ID
-            self.driver.get(f"{self.base_url}/transactions/charging-transactions")
-            time.sleep(2)
+            if not page_transactions:
+                break
             
-            # Try to extract from local storage
-            org_id = self.driver.execute_script(
-                "return localStorage.getItem('organizationId') || "
-                "sessionStorage.getItem('organizationId');"
-            )
+            all_transactions.extend(page_transactions)
+            current_offset += page_limit
             
-            if not org_id:
-                # Try to find it in the page HTML
-                page_source = self.driver.page_source
-                match = re.search(r'"organization[Ii]d"\s*:\s*"([a-f0-9]{24})"', page_source)
-                if match:
-                    org_id = match.group(1)
-            
-            if not org_id:
-                # Try to extract from current URL
-                current_url = self.driver.current_url
-                match = re.search(r'/organization/([a-f0-9]{24})', current_url)
-                if match:
-                    org_id = match.group(1)
-            
-            if org_id:
-                self.organization_id = org_id
-                _LOGGER.info("Extracted organization ID: %s", org_id)
-            else:
-                _LOGGER.warning("Could not extract organization ID - API features may be limited")
-                
-        except Exception as e:
-            _LOGGER.warning("Failed to extract organization ID: %s", str(e))
+            # Safety check to avoid infinite loops
+            if len(all_transactions) >= total_transactions:
+                break
+        
+        _LOGGER.info("Successfully fetched %d transactions", len(all_transactions))
+        return all_transactions
 
-    def scrape_transactions(self, limit: int = 100, offset: int = 0) -> list:
-        """Scrape transactions using the API endpoint via Selenium."""
-        try:
-            wait = WebDriverWait(self.driver, 10)
-            _LOGGER.debug("Fetching transactions via API (limit=%d, offset=%d)", limit, offset)
-            
-            # Build API URL with parameters
-            api_url = (
-                f"{self.base_url}/api/transaction?"
-                f"sort=-startedAt&"
-                f"offset={offset}&"
-                f"limit={limit}&"
-                f"calculate=meterTotal,subtract,meterStop,meterStart&"
-                f"postprocess=getVuid&"
-                f"populate=user,asset"
-            )
-            
-            # Use Selenium to fetch API data
-            script = f"""
-                return fetch('{api_url}', {{
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: {{
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    }}
-                }})
-                .then(response => response.json())
-                .then(data => data)
-                .catch(error => ({{ error: error.toString() }}));
-            """
-            
-            data = self.driver.execute_script(script)
-            
-            # Check for errors
-            if 'error' in data:
-                raise Exception(f"API error: {data['error']}")
-            
-            transactions = data.get('data', [])
-            total = data.get('total', 0)
-            
-            _LOGGER.info("Fetched %d transactions via API (total available: %d)", len(transactions), total)
-            
-            # Transform API data to match expected format
-            transformed_transactions = []
-            for idx, trans in enumerate(transactions):
-                transformed = self._transform_api_transaction(trans, offset + idx)
-                transformed_transactions.append(transformed)
-            
-            return transformed_transactions
+    except Exception as e:
+        _LOGGER.error("Transaction scraping failed: %s", str(e))
+        raise
 
-        except Exception as e:
-            _LOGGER.error("API request failed: %s", str(e))
-            _LOGGER.info("Falling back to HTML scraping...")
-            return self._scrape_transactions_html()
+def _fetch_transaction_page(self, limit: int, offset: int) -> list:
+    """Fetch a single page of transactions."""
+    try:
+        api_url = (
+            f"{self.base_url}/api/transaction?"
+            f"sort=-endedAt&"
+            f"offset={offset}&"
+            f"limit={limit}&"
+            f"calculate=meterTotal,subtract,meterStop,meterStart&"
+            f"postprocess=getVuid&"
+            f"populate=user,asset"
+        )
+        
+        script = f"""
+            return fetch('{api_url}', {{
+                method: 'GET',
+                credentials: 'include',
+                headers: {{
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }}
+            }})
+            .then(response => response.json())
+            .then(data => data)
+            .catch(error => ({{ error: error.toString() }}));
+        """
+        
+        data = self.driver.execute_script(script)
+        
+        if 'error' in data:
+            raise Exception(f"API error: {data['error']}")
+        
+        transactions = data.get('data', [])
+        
+        # Transform API data to match expected format
+        transformed_transactions = []
+        for idx, trans in enumerate(transactions):
+            transformed = self._transform_api_transaction(trans, offset + idx)
+            transformed_transactions.append(transformed)
+        
+        return transformed_transactions
+
+    except Exception as e:
+        _LOGGER.error("Failed to fetch transaction page: %s", str(e))
+        raise
 
     def _transform_api_transaction(self, api_trans: dict, row_id: int) -> dict:
         """Transform API transaction data to match the expected format."""
@@ -249,83 +265,11 @@ class NEFTBackofficeScraper:
             '_raw': api_trans
         }
 
-    def _scrape_transactions_html(self) -> list:
-        """Fallback method: Scrape transactions from HTML page."""
-        try:
-            wait = WebDriverWait(self.driver, 10)
-            _LOGGER.debug("Navigating to transactions page...")
-            transactions_url = f"{self.base_url}/transactions/charging-transactions"
-            self.driver.get(transactions_url)
-
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "article")))
-            time.sleep(2)
-
-            main_article = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "article.kVYSy1trxThKXaovbq62"
-            )
-
-            all_sections = main_article.find_elements(
-                By.CSS_SELECTOR,
-                "section[data-row][data-column]"
-            )
-
-            rows_dict = {}
-            for section in all_sections:
-                row_id = section.get_attribute("data-row")
-
-                try:
-                    if int(row_id) < 0:
-                        continue
-                except (ValueError, TypeError):
-                    continue
-
-                if row_id not in rows_dict:
-                    rows_dict[row_id] = {}
-
-                column_id = section.get_attribute("data-column")
-                text = section.text.strip()
-
-                badge = None
-                try:
-                    badge_elem = section.find_element(
-                        By.CSS_SELECTOR, "span.O66gV6Rd8Wl1xQSGCThg"
-                    )
-                    badge = badge_elem.text
-                except Exception:
-                    pass
-
-                has_error = len(
-                    section.find_elements(
-                        By.CSS_SELECTOR, "svg[data-testid='AlertTriangleIcon']"
-                    )
-                ) > 0
-
-                rows_dict[row_id][column_id] = {
-                    'text': text,
-                    'badge': badge,
-                    'has_error': has_error
-                }
-
-            transactions = []
-            for row_id in sorted(rows_dict.keys(), key=lambda x: int(x)):
-                transactions.append({
-                    'row_id': row_id,
-                    'columns': rows_dict[row_id]
-                })
-
-            _LOGGER.info("Scraped %d transactions from HTML", len(transactions))
-            return transactions
-
-        except Exception as e:
-            _LOGGER.error("Failed to scrape transactions from HTML: %s", str(e))
-            raise
-
     def scrape_tariff_settings(self) -> dict:
         """Scrape tariff settings using API endpoint via Selenium."""
         if not self.organization_id:
-            _LOGGER.warning("Organization ID not available, falling back to HTML scraping")
-            return self._scrape_tariff_settings_html()
+            _LOGGER.error("Organization ID not available, please configure it correctly in the settings page.")
+            raise
         
         try:
             wait = WebDriverWait(self.driver, 10)
@@ -366,8 +310,7 @@ class NEFTBackofficeScraper:
 
         except Exception as e:
             _LOGGER.error("API request for tariffs failed: %s", str(e))
-            _LOGGER.info("Falling back to HTML scraping for tariffs...")
-            return self._scrape_tariff_settings_html()
+            raise
 
     def _transform_api_tariff(self, api_data: dict) -> dict:
         """Transform API tariff data to match the expected format."""
@@ -496,123 +439,114 @@ class NEFTBackofficeScraper:
         
         return tariff_data
 
-    def _scrape_tariff_settings_html(self) -> dict:
-        """Fallback method: Scrape tariff settings from HTML page."""
+    def scrape_asset_status(self, asset_id: str) -> dict:
+        """Scrape asset status using API endpoint via Selenium."""
         try:
             wait = WebDriverWait(self.driver, 10)
-            _LOGGER.debug("Navigating to tariff settings...")
-            tariff_url = (
-                f"{self.base_url}/transactions/charging-transactions/"
-                "modal/my-organization/tariff-settings"
-            )
-            self.driver.get(tariff_url)
-
-            wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "form[novalidate]"))
-            )
-            time.sleep(2)
-
-            tariff_data = {'charging_types': []}
-
-            form = self.driver.find_element(By.CSS_SELECTOR, "form[novalidate]")
+            _LOGGER.debug("Fetching asset status for asset: %s", asset_id)
             
-            charging_containers = form.find_elements(
-                By.CSS_SELECTOR, "div[data-clickable='false']"
-            )
-
-            for container in charging_containers:
-                try:
-                    charging_type_elem = container.find_element(
-                        By.CSS_SELECTOR, "p > span[data-color='dark-800']"
-                    )
-                    charging_type = charging_type_elem.text.strip()
-                    
-                    if not charging_type or "Charging" not in charging_type:
-                        continue
-
-                    _LOGGER.debug("Processing charging type: %s", charging_type)
-                    charging_data = {'type': charging_type, 'tariffs': []}
-
-                    tariff_fields = container.find_elements(By.CSS_SELECTOR, "div[id]")
-
-                    for field in tariff_fields:
-                        field_id = field.get_attribute("id")
-                        
-                        if not field_id or not field_id.isdigit():
-                            continue
-
-                        try:
-                            label_spans = field.find_elements(By.TAG_NAME, "span")
-                            label = None
-                            for span in label_spans:
-                                text = span.text.strip()
-                                if "Tariff per" in text:
-                                    label = text
-                                    break
-                            
-                            if not label:
-                                continue
-
-                            input_elem = field.find_element(By.CSS_SELECTOR, "input[type='number']")
-                            base_value = input_elem.get_attribute("value")
-
-                            additional_fee = None
-                            all_divs = field.find_elements(By.TAG_NAME, "div")
-                            for div in all_divs:
-                                text = div.text.strip()
-                                if text.startswith("+ €"):
-                                    additional_fee = text
-                                    break
-
-                            billing_spans = field.find_elements(By.TAG_NAME, "span")
-                            
-                            total_with_vat = None
-                            country = "Unknown"
-                            vat_pct = "0"
-                            
-                            for span in billing_spans:
-                                text = span.text.strip()
-                                
-                                if "€" in text and span.get_attribute("data-color") == "dark-400":
-                                    total_with_vat = text
-                                
-                                if "Customers from" in text:
-                                    nested_spans = span.find_elements(By.TAG_NAME, "span")
-                                    if len(nested_spans) >= 2:
-                                        country = nested_spans[0].text.strip()
-                                        vat_text = nested_spans[1].text.strip()
-                                        vat_pct = vat_text.replace("%", "").strip()
-
-                            tariff = {
-                                'label': label,
-                                'base_value': base_value or "0",
-                                'additional_fee': additional_fee.lstrip("+ €") or "0.00",
-                                'total_with_vat': total_with_vat.lstrip("€") or "0.00",
-                                'country': country,
-                                'vat_percentage': vat_pct
-                            }
-
-                            charging_data['tariffs'].append(tariff)
-                            _LOGGER.debug("Parsed tariff: %s = %s", label, total_with_vat)
-
-                        except Exception as e:
-                            _LOGGER.debug("Failed to parse tariff field %s: %s", field_id, str(e))
-                            continue
-
-                    if charging_data['tariffs']:
-                        tariff_data['charging_types'].append(charging_data)
-
-                except Exception as e:
-                    _LOGGER.debug("Failed to parse charging container: %s", str(e))
-                    continue
-
-            _LOGGER.info("Scraped tariff data for %d charging types", len(tariff_data['charging_types']))
-            return tariff_data
+            # Build API URL
+            api_url = f"{self.base_url}/api/v2/asset/active/{asset_id}"
+            
+            # Use Selenium to fetch API data
+            script = f"""
+                return fetch('{api_url}', {{
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {{
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }}
+                }})
+                .then(response => response.json())
+                .then(data => data)
+                .catch(error => ({{ error: error.toString() }}));
+            """
+            
+            data = self.driver.execute_script(script)
+            
+            # Check for errors
+            if 'error' in data:
+                raise Exception(f"API error: {data['error']}")
+            
+            _LOGGER.info("Fetched asset status for %s", asset_id)
+            return self._transform_asset_status(data)
 
         except Exception as e:
-            _LOGGER.error("Failed to scrape tariff settings from HTML: %s", str(e))
+            _LOGGER.error("Failed to fetch asset status: %s", str(e))
             raise
 
+    def _transform_asset_status(self, api_data: dict) -> dict:
+        """Transform API asset data to a structured format."""
+        details = api_data.get('details', {})
+        connectors = details.get('connectors', {})
+        
+        # Extract connector statuses
+        connector_statuses = {}
+        for connector_id, connector_data in connectors.items():
+            connector_statuses[connector_id] = connector_data.get('status', 'Unknown')
+        
+        return {
+            'asset_id': api_data.get('_id'),
+            'serial': api_data.get('serial'),
+            'alias': api_data.get('alias'),
+            'connection_status': api_data.get('connectionStatus', 'Unknown'),
+            'management_status': api_data.get('managementStatus', 'Unknown'),
+            'last_contact': api_data.get('lastContact'),
+            'firmware': api_data.get('firmware'),
+            'model': api_data.get('model'),
+            'vendor': api_data.get('vendor'),
+            'protocol_version': api_data.get('protocolVersion'),
+            'details': {
+                'max_amps': details.get('maxAmps'),
+                'max_amps_per_socket': details.get('maxAmpsPerSocket'),
+                'phase_count': details.get('phaseCount'),
+                'voltage': details.get('voltage'),
+                'connector_type': details.get('connectorType'),
+                'communication_type': details.get('communicationType'),
+                'power_type': details.get('powerType'),
+            },
+            'connectors': connector_statuses,
+            'tariff': api_data.get('tariff', {}),
+        }
+
+    def scrape_all_assets(self) -> list:
+        """Scrape all active assets from transactions."""
+        try:
+            _LOGGER.debug("Extracting asset IDs from transactions")
+            
+            # Get transactions to extract asset IDs
+            transactions = self.scrape_transactions(limit=100)
+            
+            # Extract unique asset IDs
+            asset_ids = set()
+            for trans in transactions:
+                if '_raw' in trans:
+                    asset = trans['_raw'].get('asset', {})
+                    if isinstance(asset, dict):
+                        asset_id = asset.get('_id')
+                        if asset_id:
+                            asset_ids.add(asset_id)
+            
+            _LOGGER.info("Found %d unique assets", len(asset_ids))
+            
+            # Fetch status for each asset
+            assets_status = []
+            for asset_id in asset_ids:
+                try:
+                    status = self.scrape_asset_status(asset_id)
+                    assets_status.append(status)
+                except Exception as e:
+                    _LOGGER.warning("Failed to fetch status for asset %s: %s", asset_id, str(e))
+                    continue
+            
+            return assets_status
+
+        except Exception as e:
+            _LOGGER.error("Failed to scrape assets: %s", str(e))
+            return []
+
+            
     def close(self):
         """Close the browser."""
         if self.driver:

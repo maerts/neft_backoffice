@@ -56,6 +56,14 @@ async def async_setup_entry(
         NEFTCoordinatorStatusSensor(coordinator, entry),
     ]
 
+    # Add asset sensors dynamically (NEW)
+    if coordinator.data and "assets_status" in coordinator.data:
+        for asset in coordinator.data["assets_status"]:
+            asset_id = asset.get("asset_id")
+            if asset_id:
+                sensors.append(NEFTAssetStatusSensor(coordinator, entry, asset_id))
+                sensors.append(NEFTAssetConnectorSensor(coordinator, entry, asset_id))
+
     async_add_entities(sensors)
 
 
@@ -112,7 +120,6 @@ class NEFTTotalTransactionsSensor(NEFTBaseSensor):
         
         return {
             "last_update": self.coordinator.data.get("last_update"),
-            "consecutive_errors": self.coordinator.consecutive_errors,
         }
 
 
@@ -220,12 +227,21 @@ class NEFTTotalEnergySensor(NEFTBaseSensor):
             
             # Parse kWh
             try:
+                # Remove "kWh" suffix and clean up
                 kwh_clean = kwh_text.replace("kWh", "").replace(",", ".").strip()
-                total_kwh += float(kwh_clean)
-            except (ValueError, AttributeError):
+                kwh_value = float(kwh_clean)
+                # Only add positive values
+                if kwh_value > 0:
+                    total_kwh += kwh_value
+                else:
+                    _LOGGER.debug("Skipping negative kWh value: %s", kwh_text)
+            except (ValueError, AttributeError) as e:
+                _LOGGER.debug("Failed to parse kWh '%s': %s", kwh_text, e)
                 continue
         
-        return round(total_kwh, 2)
+        # Ensure we never return negative
+        result = max(0.0, round(total_kwh, 2))
+        return result
 
 
 class NEFTACTariffSensor(NEFTBaseSensor):
@@ -371,8 +387,6 @@ class NEFTCoordinatorStatusSensor(NEFTBaseSensor):
         """Return the state of the sensor."""
         if self.coordinator.last_update_success:
             return "OK"
-        elif self.coordinator.consecutive_errors > 0:
-            return f"Error ({self.coordinator.consecutive_errors} consecutive)"
         else:
             return "Unknown"
 
@@ -381,7 +395,6 @@ class NEFTCoordinatorStatusSensor(NEFTBaseSensor):
         """Return additional attributes."""
         attrs = {
             "last_update_success": self.coordinator.last_update_success,
-            "consecutive_errors": self.coordinator.consecutive_errors,
             "update_interval": str(self.coordinator.update_interval),
         }
         
@@ -401,3 +414,156 @@ class NEFTCoordinatorStatusSensor(NEFTBaseSensor):
     def available(self) -> bool:
         """Return if entity is available."""
         return True  # Always available to show status
+        
+class NEFTAssetStatusSensor(NEFTBaseSensor):
+    """Sensor for charging station status."""
+
+    def __init__(
+        self, 
+        coordinator: NEFTDataUpdateCoordinator, 
+        entry: ConfigEntry,
+        asset_id: str
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, f"asset_{asset_id}_status")
+        self._asset_id = asset_id
+        self._attr_icon = "mdi:ev-station"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        asset_data = self._get_asset_data()
+        if asset_data:
+            alias = asset_data.get("alias", "")
+            serial = asset_data.get("serial", "")
+            return f"{alias or serial} Status"
+        return f"Asset {self._asset_id} Status"
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        asset_data = self._get_asset_data()
+        if asset_data:
+            return asset_data.get("connection_status", "Unknown")
+        return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        asset_data = self._get_asset_data()
+        if not asset_data:
+            return {}
+        
+        details = asset_data.get("details", {})
+        
+        return {
+            "serial": asset_data.get("serial"),
+            "alias": asset_data.get("alias"),
+            "management_status": asset_data.get("management_status"),
+            "last_contact": asset_data.get("last_contact"),
+            "firmware": asset_data.get("firmware"),
+            "model": asset_data.get("model"),
+            "vendor": asset_data.get("vendor"),
+            "protocol_version": asset_data.get("protocol_version"),
+            "max_amps": details.get("max_amps"),
+            "voltage": details.get("voltage"),
+            "phase_count": details.get("phase_count"),
+            "power_type": details.get("power_type"),
+            "connector_type": details.get("connector_type"),
+            "communication_type": details.get("communication_type"),
+        }
+
+    def _get_asset_data(self) -> dict | None:
+        """Get asset data from coordinator."""
+        if not self.coordinator.data:
+            return None
+        
+        assets = self.coordinator.data.get("assets_status", [])
+        for asset in assets:
+            if asset.get("asset_id") == self._asset_id:
+                return asset
+        
+        return None
+
+
+class NEFTAssetConnectorSensor(NEFTBaseSensor):
+    """Sensor for charging station connector status."""
+
+    def __init__(
+        self, 
+        coordinator: NEFTDataUpdateCoordinator, 
+        entry: ConfigEntry,
+        asset_id: str
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, f"asset_{asset_id}_connectors")
+        self._asset_id = asset_id
+        self._attr_icon = "mdi:ev-plug-type2"
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        asset_data = self._get_asset_data()
+        if asset_data:
+            alias = asset_data.get("alias", "")
+            serial = asset_data.get("serial", "")
+            return f"{alias or serial} Connectors"
+        return f"Asset {self._asset_id} Connectors"
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        asset_data = self._get_asset_data()
+        if not asset_data:
+            return "Unknown"
+        
+        connectors = asset_data.get("connectors", {})
+        if not connectors:
+            return "No connectors"
+        
+        # Return status of first connector or summary
+        statuses = list(connectors.values())
+        if len(statuses) == 1:
+            return statuses[0]
+        
+        # Multiple connectors - return summary
+        charging_count = sum(1 for s in statuses if s == "Charging")
+        if charging_count > 0:
+            return f"Charging ({charging_count}/{len(statuses)})"
+        
+        available_count = sum(1 for s in statuses if s == "Available")
+        if available_count == len(statuses):
+            return "Available"
+        
+        return "Mixed"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        asset_data = self._get_asset_data()
+        if not asset_data:
+            return {}
+        
+        connectors = asset_data.get("connectors", {})
+        
+        attrs = {
+            "connector_count": len(connectors),
+        }
+        
+        # Add individual connector statuses
+        for connector_id, status in connectors.items():
+            attrs[f"connector_{connector_id}"] = status
+        
+        return attrs
+
+    def _get_asset_data(self) -> dict | None:
+        """Get asset data from coordinator."""
+        if not self.coordinator.data:
+            return None
+        
+        assets = self.coordinator.data.get("assets_status", [])
+        for asset in assets:
+            if asset.get("asset_id") == self._asset_id:
+                return asset
+        
+        return None
